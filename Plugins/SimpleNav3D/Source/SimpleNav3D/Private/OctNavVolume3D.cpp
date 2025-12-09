@@ -11,7 +11,6 @@
 #include <unordered_map>
 #include <utility>
 
-
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetSystemLibrary.h"
 
@@ -23,16 +22,34 @@
 #include "CollisionQueryParams.h"
 #include "DrawDebugHelpers.h"
 
+/// Global material reference for the debug grid
 static UMaterial* GridMaterial = nullptr;
 
+//
+// ============================================================================
+// AOctNavVolume3D ¨C 3D Grid Navigation Volume with Octree-Based Occlusion
+// ============================================================================
+// - Builds a 3D navigation grid composed of NavNodes
+// - Visualizes the grid with a procedural mesh (debug grid)
+// - Builds an octree for coarse collision / blockage tests
+// - Provides A* pathfinding over the grid
+// - Supports finding nearest free node via BFS with collision checks
+// ============================================================================
+//
 
 AOctNavVolume3D::AOctNavVolume3D()
 {
 	PrimaryActorTick.bCanEverTick = true;
 
+	// -------------------------------------------------------
+	// Scene / Root Setup
+	// -------------------------------------------------------
 	DefaultRootComponent = CreateDefaultSubobject<USceneComponent>(TEXT("DefaultRootComponent"));
 	SetRootComponent(DefaultRootComponent);
 
+	// -------------------------------------------------------
+	// Procedural Mesh Setup (visual debug grid)
+	// -------------------------------------------------------
 	ProceduralMeshComponent = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("ProceduralMesh"));
 	ProceduralMeshComponent->SetupAttachment(DefaultRootComponent);
 	ProceduralMeshComponent->SetCastShadow(false);
@@ -42,9 +59,12 @@ AOctNavVolume3D::AOctNavVolume3D()
 	ProceduralMeshComponent->SetGenerateOverlapEvents(false);
 	ProceduralMeshComponent->CanCharacterStepUpOn = ECanBeCharacterBase::ECB_No;
 
-	//Only shows the box
+	// Grid is visible in-game unless the actor itself is hidden.
 	ProceduralMeshComponent->SetHiddenInGame(false);
 
+	// -------------------------------------------------------
+	// Load debug grid material from plugin content
+	// -------------------------------------------------------
 	static ConstructorHelpers::FObjectFinder<UMaterial> MaterialFinder(TEXT("Material'/SimpleNav3D/M_Nav.M_Nav'"));
 
 	checkf(MaterialFinder.Succeeded(), TEXT("Could not find grid material for SimpleNav3D plugin. Make sure the SimpleNav3D plugin is correctly installed."));
@@ -56,11 +76,15 @@ void AOctNavVolume3D::BeginPlay()
 {
 	Super::BeginPlay();
 
-	//Allocate Nodes here
+	// -------------------------------------------------------
+	// Allocate NavNode array for the entire grid
+	// -------------------------------------------------------
 	const int32 TotalNodes = GetTotalDivisions();
 	NavNodes = new NavNode[TotalNodes];
 
-
+	// Precomputed neighbor offset list for 3D grid adjacency:
+	//  - Above, middle, below layers.
+	//  - Used to build neighbor links between NavNodes.
 	static const TArray<FIntVector> NeighbourOffsets = {
 		// Above (z + 1)
 	   { 1, -1,  1}, { 1,  0,  1}, { 1,  1,  1},
@@ -78,44 +102,51 @@ void AOctNavVolume3D::BeginPlay()
 	   {-1, -1, -1}, {-1,  0, -1}, {-1,  1, -1}
 	};
 
+	// Helper lambda: attempts to add a valid neighbour based on
+	// grid bounds + MinSharedNeighborAxes constraint.
 	auto AddNeighbour = [this](NavNode* Node, const FIntVector Offset)
 		{
-			const  FIntVector NCoord = Node->Coordinates + Offset;
+			const FIntVector NCoord = Node->Coordinates + Offset;
 
+			// Ignore neighbours outside of the grid
 			if (!this->AreCoordinatesValid(NCoord))
 			{
 				return;
 			}
 
+			// Count how many axes are shared with the candidate node
 			int8 SharedAxes = 0;
 			if (Node->Coordinates.X == NCoord.X) SharedAxes++;
 			if (Node->Coordinates.Y == NCoord.Y) SharedAxes++;
 			if (Node->Coordinates.Z == NCoord.Z) SharedAxes++;
 
+			// Only connect neighbours that share enough axes (e.g., 6- or 18-connected)
 			if (SharedAxes >= this->MinSharedNeighborAxes && SharedAxes < 3)
 			{
 				Node->Neighbours.push_back(GetNode(NCoord));
 			}
 		};
 
-
-	// Populate all nodes and add their corresponding neighbors
+	// -------------------------------------------------------
+	// Populate all NavNodes and build neighbour adjacency
+	// -------------------------------------------------------
 	for (int32 Z = 0; Z < DivisionsZ; ++Z)
-	for (int32 Y = 0; Y < DivisionsY; ++Y)
-	for (int32 X = 0; X < DivisionsX; ++X)
-	{
-		NavNode* Node = GetNode({ X,Y,Z });
-		Node->Coordinates = { X, Y, Z };
+		for (int32 Y = 0; Y < DivisionsY; ++Y)
+			for (int32 X = 0; X < DivisionsX; ++X)
+			{
+				NavNode* Node = GetNode({ X, Y, Z });
+				Node->Coordinates = { X, Y, Z };
 
-		for (const FIntVector& Offset : NeighbourOffsets)
-		{
-			// Add all neighbors that share at least MinSharedNeighborAxes axes
-			AddNeighbour(Node, Offset);
-		}
-	}
+				for (const FIntVector& Offset : NeighbourOffsets)
+				{
+					AddNeighbour(Node, Offset);
+				}
+			}
 
-	//Build the Octree for coarse collision testing
-	DestroyOctree(); // first delete the original tree 
+	// -------------------------------------------------------
+	// Build octree for coarse occupancy / blockage queries
+	// -------------------------------------------------------
+	DestroyOctree(); // Destroy any previous tree (just in case)
 	OctreeMinCellSize = FMath::Max(OctreeMinCellSize, DivisionSize);
 	const FBox EntireGridBoxInWorld = GetWorldAlignedVolumeBox();
 	OctreeRoot = BuildOctree(EntireGridBoxInWorld, 0, TArray<TEnumAsByte<EObjectTypeQuery>>(), nullptr);
@@ -123,26 +154,33 @@ void AOctNavVolume3D::BeginPlay()
 
 void AOctNavVolume3D::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	// Cleanup octree and NavNode array
 	DestroyOctree();
-	
+
 	delete[] NavNodes;
 	NavNodes = nullptr;
 
 	Super::EndPlay(EndPlayReason);
 }
 
+//
+// ============================================================================
+// Debug Grid Mesh Generation
+// ============================================================================
+//
+
 void AOctNavVolume3D::CreateLine(const FVector& InStart, const FVector& InEnd, const FVector& InUpNormal, TArray<FVector>& OutVertices, TArray<int32>& OutTriangles)
 {
-
 	const float HalfThickness = LineThickness * 0.5f;
 
 	FVector LineDir = InEnd - InStart;
 	if (!LineDir.Normalize())
 	{
-		// Degenerate line : start almost equals to end, skip drawing 
+		// Degenerate line: start almost equals end; skip drawing
 		return;
 	}
 
+	// Compute basis directions used to extrude a quad around the line
 	FVector SideDir1 = FVector::CrossProduct(LineDir, InUpNormal);
 	if (!SideDir1.Normalize())
 	{
@@ -151,6 +189,7 @@ void AOctNavVolume3D::CreateLine(const FVector& InStart, const FVector& InEnd, c
 
 	FVector SideDir2 = FVector::CrossProduct(LineDir, SideDir1).GetSafeNormal();
 
+	// Helper lambda: build a quad along ThicknessDirection
 	auto AddQuad = [&OutVertices, &OutTriangles, &InStart, &InEnd, HalfThickness](const FVector& ThicknessDirection)
 		{
 			const int32 BaseIndex = OutVertices.Num();
@@ -173,9 +212,15 @@ void AOctNavVolume3D::CreateLine(const FVector& InStart, const FVector& InEnd, c
 	AddQuad(SideDir2);
 }
 
+//
+// ============================================================================
+// Grid Coordinate Helpers
+// ============================================================================
+//
+
 bool AOctNavVolume3D::AreCoordinatesValid(const FIntVector& Coordinates) const
 {
-	return Coordinates.X >=0 && Coordinates.X < DivisionsX
+	return Coordinates.X >= 0 && Coordinates.X < DivisionsX
 		&& Coordinates.Y >= 0 && Coordinates.Y < DivisionsY
 		&& Coordinates.Z >= 0 && Coordinates.Z < DivisionsZ;
 }
@@ -187,6 +232,12 @@ void AOctNavVolume3D::ClampCoordinatesToGrid(FIntVector& Coordinates)
 	Coordinates.Z = FMath::Clamp(Coordinates.Z, 0, DivisionsZ - 1);
 }
 
+//
+// ============================================================================
+// Octree Lifetime Management
+// ============================================================================
+//
+
 void AOctNavVolume3D::DestroyOctree()
 {
 	if (OctreeRoot)
@@ -196,15 +247,21 @@ void AOctNavVolume3D::DestroyOctree()
 	}
 }
 
-FBox AOctNavVolume3D::GetWorldAlignedVolumeBox() 
+//
+// ============================================================================
+// Bounds and Transform Helpers
+// ============================================================================
+//
+
+FBox AOctNavVolume3D::GetWorldAlignedVolumeBox()
 {
-	// Local grid bounds
+	// Local grid bounds in actor space (no rotation)
 	FBox LocalBox(
 		FVector::ZeroVector,
 		FVector(GetGridXBound(), GetGridYBound(), GetGridZBound())
 	);
 
-	// Only apply translation -- ignore rotation & scale
+	// Only apply translation ¨C ignore rotation & scale to keep grid axis-aligned to world
 	const FVector WorldOffset = GetActorLocation();
 
 	return LocalBox.ShiftBy(WorldOffset);
@@ -212,9 +269,9 @@ FBox AOctNavVolume3D::GetWorldAlignedVolumeBox()
 
 FIntVector AOctNavVolume3D::ConvertWorldLocationToGridCoordinates(const FVector& WorldCoordinate)
 {
+	// Transform world-space location into local grid space
 	FTransform GridTransform = GetActorTransform();
 	const FVector GridSpacePos = UKismetMathLibrary::InverseTransformLocation(GridTransform, WorldCoordinate);
-
 
 	FIntVector GridSpaceCoords;
 
@@ -225,29 +282,44 @@ FIntVector AOctNavVolume3D::ConvertWorldLocationToGridCoordinates(const FVector&
 	return GridSpaceCoords;
 }
 
-FVector AOctNavVolume3D::ConvertGridCoordinatesToWorldLocation(const FIntVector& GridCoordinates) 
+FVector AOctNavVolume3D::ConvertGridCoordinatesToWorldLocation(const FIntVector& GridCoordinates)
 {
 	FIntVector GridCoordsCopy = GridCoordinates;
 	ClampCoordinatesToGrid(GridCoordsCopy);
 
+	// Convert grid indices to local position at cell center
 	FVector GridSpacePos(0.0f, 0.0f, 0.0f);
 	const float EdgeToCenterOffset = DivisionSize * 0.5f;
 	GridSpacePos.X = (GridCoordsCopy.X * DivisionSize) + EdgeToCenterOffset;
 	GridSpacePos.Y = (GridCoordsCopy.Y * DivisionSize) + EdgeToCenterOffset;
 	GridSpacePos.Z = (GridCoordsCopy.Z * DivisionSize) + EdgeToCenterOffset;
 
+	// Transform back to world space
 	return UKismetMathLibrary::TransformLocation(GetActorTransform(), GridSpacePos);
 }
 
-bool AOctNavVolume3D::IsActorOverlapping(float InAgentRadius, float InAgentHalfHeight,
-	AActor* IgnoreActor, const FVector& InWorldLocation, const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes, UClass* InActorClassFilter) const
+//
+// ============================================================================
+// Collision / Overlap Helpers
+// ============================================================================
+//
+
+bool AOctNavVolume3D::IsActorOverlapping(
+	float InAgentRadius,
+	float InAgentHalfHeight,
+	AActor* IgnoreActor,
+	const FVector& InWorldLocation,
+	const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
+	UClass* InActorClassFilter) const
 {
+	// Build object type query params based on provided object types
 	FCollisionObjectQueryParams ObjectParams;
 	for (TEnumAsByte<EObjectTypeQuery> ObjType : InObjectTypes)
 	{
 		ObjectParams.AddObjectTypesToQuery(UEngineTypes::ConvertToCollisionChannel(ObjType));
 	}
 
+	// Configure collision query (optional ignored actor)
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(IsActorOverlappingTest), false);
 	QueryParams.bFindInitialOverlaps = true;
 	if (IgnoreActor)
@@ -255,6 +327,7 @@ bool AOctNavVolume3D::IsActorOverlapping(float InAgentRadius, float InAgentHalfH
 		QueryParams.AddIgnoredActor(IgnoreActor);
 	}
 
+	// Capsule representing agent
 	const FCollisionShape CapsuleShape =
 		FCollisionShape::MakeCapsule(InAgentRadius, InAgentHalfHeight);
 
@@ -268,24 +341,29 @@ bool AOctNavVolume3D::IsActorOverlapping(float InAgentRadius, float InAgentHalfH
 		QueryParams
 	);
 
-	if (!bHit)
-	{
-		return false;
-	}
-	return true;
+	return bHit;
 }
 
-NavNode* AOctNavVolume3D::FindNearestFreeNode(NavNode* InFromNode,
+//
+// ============================================================================
+// Nearest Free Node Search (BFS over grid)
+// ============================================================================
+//
+
+NavNode* AOctNavVolume3D::FindNearestFreeNode(
+	NavNode* InFromNode,
 	AActor* IgnoredActor,
 	const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
 	UClass* InActorClassFilter,
-	float InDetectionRadius, float InDetectionHalfHeight)
+	float InDetectionRadius,
+	float InDetectionHalfHeight)
 {
 	if (!InFromNode || AreCoordinatesValid(InFromNode->Coordinates) == false)
 	{
 		return nullptr;
 	}
 
+	// BFS over grid nodes starting from InFromNode
 	TQueue<NavNode*> Queue;
 	TSet<NavNode*> Visited;
 
@@ -299,21 +377,27 @@ NavNode* AOctNavVolume3D::FindNearestFreeNode(NavNode* InFromNode,
 
 		FVector NodeWorldLocation = ConvertGridCoordinatesToWorldLocation(CurNode->Coordinates);
 
+		// Skip nodes marked as blocked in the octree
 		if (OctreeRoot && QueryPointBlocked(NodeWorldLocation))
 		{
-
-			
-		} 
+			// Node is blocked at octree level, continue search
+		}
 		else
 		{
-			if (!IsActorOverlapping(InDetectionRadius, InDetectionHalfHeight, IgnoredActor, NodeWorldLocation
-				, InObjectTypes, InActorClassFilter))
+			// Additional check: ensure no dynamic actor overlap for this agent/capsule
+			if (!IsActorOverlapping(
+				InDetectionRadius,
+				InDetectionHalfHeight,
+				IgnoredActor,
+				NodeWorldLocation,
+				InObjectTypes,
+				InActorClassFilter))
 			{
 				return CurNode;
 			}
-
 		}
 
+		// Enqueue neighbours that were not visited yet
 		for (NavNode* Neighbour : CurNode->Neighbours)
 		{
 			if (!Visited.Contains(Neighbour))
@@ -324,24 +408,33 @@ NavNode* AOctNavVolume3D::FindNearestFreeNode(NavNode* InFromNode,
 		}
 	}
 
+	// No free node found reachable from the starting node
 	return nullptr;
 }
 
-FOctreeNode* AOctNavVolume3D::BuildOctree(const FBox& InBox,
-	int32 InDepth, const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
+//
+// ============================================================================
+// Octree Construction / Query
+// ============================================================================
+//
+
+FOctreeNode* AOctNavVolume3D::BuildOctree(
+	const FBox& InBox,
+	int32 InDepth,
+	const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
 	UClass* InActorClassFilter)
 {
-	// create node 
+	// Create node representing the current bounding box
 	FOctreeNode* TreeNode = new FOctreeNode(InBox);
 
-	// Leaf Condition
+	// Leaf condition based on max side length and max depth
 	const FVector BoxSize = InBox.GetSize();
 	const float MaxSideLength = FMath::Max3(BoxSize.X, BoxSize.Y, BoxSize.Z);
-	
+
 	const bool bSmallEnough = (MaxSideLength <= OctreeMinCellSize + KINDA_SMALL_NUMBER);
 	const bool bMaxDepthReached = (InDepth >= OctreeMaxDepth);
 
-	// if this node is a leaf node, update its blocked status
+	// Leaf node: determine if this box is blocked
 	if (bSmallEnough || bMaxDepthReached)
 	{
 		TreeNode->bIsLeaf = true;
@@ -349,20 +442,21 @@ FOctreeNode* AOctNavVolume3D::BuildOctree(const FBox& InBox,
 		return TreeNode;
 	}
 
+	// Internal node: split into 8 child boxes
 	TreeNode->bIsLeaf = false;
 	const FVector C = InBox.GetCenter();
 	const FVector Min = InBox.Min;
 	const FVector Max = InBox.Max;
 
 	FBox ChildBoxes[8] = {
-	FBox(FVector(Min.X, Min.Y, Min.Z), FVector(C.X,   C.Y,   C.Z)),   // 0
-	FBox(FVector(C.X,  Min.Y, Min.Z), FVector(Max.X,  C.Y,   C.Z)),   // 1
-	FBox(FVector(Min.X, C.Y,  Min.Z), FVector(C.X,    Max.Y,  C.Z)),  // 2
-	FBox(FVector(C.X,  C.Y,  Min.Z), FVector(Max.X,   Max.Y,  C.Z)),  // 3
-	FBox(FVector(Min.X, Min.Y, C.Z), FVector(C.X,     C.Y,    Max.Z)),// 4
-	FBox(FVector(C.X,  Min.Y, C.Z), FVector(Max.X,    C.Y,    Max.Z)),// 5
-	FBox(FVector(Min.X, C.Y,  C.Z), FVector(C.X,      Max.Y,  Max.Z)),// 6
-	FBox(FVector(C.X,  C.Y,  C.Z), FVector(Max.X,     Max.Y,  Max.Z)) // 7
+		FBox(FVector(Min.X, Min.Y, Min.Z), FVector(C.X,   C.Y,   C.Z)),   // 0
+		FBox(FVector(C.X,  Min.Y, Min.Z), FVector(Max.X,  C.Y,   C.Z)),   // 1
+		FBox(FVector(Min.X, C.Y,  Min.Z), FVector(C.X,    Max.Y,  C.Z)),  // 2
+		FBox(FVector(C.X,  C.Y,  Min.Z), FVector(Max.X,   Max.Y,  C.Z)),  // 3
+		FBox(FVector(Min.X, Min.Y, C.Z), FVector(C.X,     C.Y,    Max.Z)),// 4
+		FBox(FVector(C.X,  Min.Y, C.Z), FVector(Max.X,    C.Y,    Max.Z)),// 5
+		FBox(FVector(Min.X, C.Y,  C.Z), FVector(C.X,      Max.Y,  Max.Z)),// 6
+		FBox(FVector(C.X,  C.Y,  C.Z), FVector(Max.X,     Max.Y,  Max.Z)) // 7
 	};
 
 	bool bAllBlocked = true;
@@ -372,35 +466,38 @@ FOctreeNode* AOctNavVolume3D::BuildOctree(const FBox& InBox,
 		bAllBlocked &= (TreeNode->Children[i]->bIsLeaf && TreeNode->Children[i]->bBlocked);
 	}
 
-	// TODO::If all children are blocked leaves, we can mark this node as a blocked leaf and delete its children
+	// TODO: If all children are blocked leaves, we can mark this node as a blocked leaf and delete its children for memory optimization.
 	return TreeNode;
 }
 
-bool AOctNavVolume3D::IsBoxBlocked(const FBox& InBox,
+bool AOctNavVolume3D::IsBoxBlocked(
+	const FBox& InBox,
 	const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
 	UClass* InActorClassFilter)
 {
-
-	// Overlap Tests, what kind of object channels we want to check against
+	// Build list of collision channels to query against
 	FCollisionObjectQueryParams ObjectCollisionParams;
 	for (auto ObjectType : InObjectTypes)
 	{
 		ObjectCollisionParams.AddObjectTypesToQuery(UEngineTypes::ConvertToCollisionChannel(ObjectType));
 	}
 
-	// get the box's center and half side length
+	// Compute center and extent for box collision test
 	const FVector Center = InBox.GetCenter();
 	const FVector Extent = InBox.GetExtent();
 
-	// check if the box overlaps with any object type specified
+	// Check if the box overlaps with any relevant objects
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(OctreeBoxTest), false);
 	bool bHit = GetWorld()->OverlapAnyTestByObjectType(
-		Center, FQuat::Identity, ObjectCollisionParams, 
-		FCollisionShape::MakeBox(Extent), QueryParams);
+		Center,
+		FQuat::Identity,
+		ObjectCollisionParams,
+		FCollisionShape::MakeBox(Extent),
+		QueryParams);
 
 	return bHit;
 
-	//TODO::Trace for blocked only (now all overlaped) if we want to -> 
+	// TODO: Optional refinement: trace for "blocked" only, instead of any overlap.
 }
 
 bool AOctNavVolume3D::QueryPointBlocked(const FVector& WorldPoint) const
@@ -410,6 +507,7 @@ bool AOctNavVolume3D::QueryPointBlocked(const FVector& WorldPoint) const
 		return false;
 	}
 
+	// Traverse octree down to the leaf that contains WorldPoint
 	const FOctreeNode* CurrentNode = OctreeRoot;
 	while (CurrentNode && !CurrentNode->bIsLeaf)
 	{
@@ -418,18 +516,29 @@ bool AOctNavVolume3D::QueryPointBlocked(const FVector& WorldPoint) const
 		const bool bIsHighY = WorldPoint.Y >= Center.Y;
 		const bool bIsHighZ = WorldPoint.Z >= Center.Z;
 
-		int CorrectChildIndex = (bIsHighX ? 1: 0) | ((bIsHighY ? 1: 0) << 1) | ((bIsHighZ ? 1: 0) << 2);
+		const int CorrectChildIndex =
+			(bIsHighX ? 1 : 0)
+			| ((bIsHighY ? 1 : 0) << 1)
+			| ((bIsHighZ ? 1 : 0) << 2);
+
 		CurrentNode = CurrentNode->Children[CorrectChildIndex];
 	}
 
 	return (CurrentNode) ? CurrentNode->bBlocked : false;
 }
 
+//
+// ============================================================================
+// Editor Construction ¨C Build Debug Grid Mesh
+// ============================================================================
+//
+
 void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 
 #if WITH_EDITOR
+	// Enforce axis-aligned, unit-scale volume for simplicity
 	if (!Transform.GetRotation().IsIdentity())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("OctNavVolume3D: Rotation is ignored. Please keep this actor unrotated."));
@@ -441,16 +550,15 @@ void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 			TEXT("OctNavVolume3D: Scale is ignored. Please keep scale = (1,1,1)."));
 	}
 #endif
-	
 
 	TArray<FVector> Vertices;
 	TArray<int32> TrianglesIndexArray;
 
-	const uint32 EstimateLineCount = 
-		(DivisionsX + 1) * (DivisionsY + 1) * 2 // XY planes
+	// Estimated number of grid lines for all three planes (XY, YZ, XZ)
+	const uint32 EstimateLineCount =
+		(DivisionsX + 1) * (DivisionsY + 1) * 2   // XY planes
 		+ (DivisionsY + 1) * (DivisionsZ + 1) * 2 // YZ planes
 		+ (DivisionsX + 1) * (DivisionsZ + 1) * 2; // XZ planes
-
 
 	const uint32 EstimateVertexCount = EstimateLineCount * 4;
 	const uint32 EstimateTriangleIndexCount = EstimateLineCount * 6;
@@ -458,30 +566,30 @@ void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 	Vertices.Reserve(EstimateVertexCount);
 	TrianglesIndexArray.Reserve(EstimateTriangleIndexCount);
 
-
 	const float GridXBound = GetGridXBound();
 	const float GridYBound = GetGridYBound();
 	const float GridZBound = GetGridZBound();
 
-
-	auto AddLine = [this,&Vertices, &TrianglesIndexArray](const FVector& InStart, const FVector& InEnd, const FVector& InUpNormal)
+	// Helper to add one thick line segment to the procedural mesh
+	auto AddLine = [this, &Vertices, &TrianglesIndexArray](const FVector& InStart, const FVector& InEnd, const FVector& InUpNormal)
 		{
 			this->CreateLine(InStart, InEnd, InUpNormal, Vertices, TrianglesIndexArray);
 		};
 
-
 	FVector Start = FVector::ZeroVector;
 	FVector End = FVector::ZeroVector;
 
-	// Line Parallel to Y Axis
-	for (int32 Z = 0; Z<= DivisionsZ; ++Z)
+	// -------------------------------------------------------
+	// Lines parallel to Y axis (varying X, Z fixed)
+	// -------------------------------------------------------
+	for (int32 Z = 0; Z <= DivisionsZ; ++Z)
 	{
-		Start.Z  =  DivisionSize * Z;
-		End.Z = DivisionSize *Z;
+		Start.Z = DivisionSize * Z;
+		End.Z = DivisionSize * Z;
 
 		for (int32 X = 0; X <= DivisionsX; ++X)
 		{
-			Start.X = X  * DivisionSize;
+			Start.X = X * DivisionSize;
 			End.X = X * DivisionSize;
 
 			Start.Y = 0.0f;
@@ -491,7 +599,9 @@ void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 		}
 	}
 
-	// Line Parallel to X Axis
+	// -------------------------------------------------------
+	// Lines parallel to X axis (varying Y, Z fixed)
+	// -------------------------------------------------------
 	for (int32 Z = 0; Z <= DivisionsZ; ++Z)
 	{
 		Start.Z = DivisionSize * Z;
@@ -509,7 +619,9 @@ void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 		}
 	}
 
-	// Line Parallel to Z Axis
+	// -------------------------------------------------------
+	// Lines parallel to Z axis (varying Z, X/Y fixed)
+	// -------------------------------------------------------
 	for (int32 X = 0; X <= DivisionsX; ++X)
 	{
 		Start.X = End.X = X * DivisionSize;
@@ -525,17 +637,19 @@ void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 		}
 	}
 
+	// Build the procedural mesh section for the debug grid
 	ProceduralMeshComponent->CreateMeshSection(
 		0,
-		Vertices,                     //Vertices
-		TrianglesIndexArray,          //Indices
-		TArray<FVector>(),            //Normals
-		TArray<FVector2D>(),          //UVs
-		TArray<FColor>(),             //Vertex Colors
-		TArray<FProcMeshTangent>(),   //Tangents
-		false                         //bCreateCollision
+		Vertices,                     // Vertices
+		TrianglesIndexArray,          // Indices
+		TArray<FVector>(),            // Normals
+		TArray<FVector2D>(),          // UVs
+		TArray<FColor>(),             // Vertex Colors
+		TArray<FProcMeshTangent>(),   // Tangents
+		false                         // bCreateCollision
 	);
 
+	// Apply dynamic material instance to control color/opacity at runtime
 	if (GridMaterial)
 	{
 		UMaterialInstanceDynamic* MID = UMaterialInstanceDynamic::Create(GridMaterial, this);
@@ -552,33 +666,54 @@ void AOctNavVolume3D::OnConstruction(const FTransform& Transform)
 void AOctNavVolume3D::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	// Currently no per-frame behavior needed for the volume.
+	// Hook for future dynamic visualization or debug updates.
 }
 
-NavNode* AOctNavVolume3D::GetNode(FIntVector Coordinates) 
+//
+// ============================================================================
+// Node Access
+// ============================================================================
+//
+
+NavNode* AOctNavVolume3D::GetNode(FIntVector Coordinates)
 {
-	// First clamp coordinates to grid
+	// Clamp coordinates into valid grid range
 	ClampCoordinatesToGrid(Coordinates);
 
 	const int32 DivisionPerLevel = DivisionsX * DivisionsY;
-	const int32 Index = (Coordinates.Z * DivisionPerLevel) + (Coordinates.Y * DivisionsX) + Coordinates.X;
+	const int32 Index =
+		(Coordinates.Z * DivisionPerLevel) +
+		(Coordinates.Y * DivisionsX) +
+		Coordinates.X;
+
 	if (Index < 0 || Index >= GetTotalDivisions())
 	{
 		return nullptr;
 	}
-	return  &NavNodes[Index];
+	return &NavNodes[Index];
 }
 
-bool AOctNavVolume3D::FindPath(const FVector& InStart,
+//
+// ============================================================================
+// A* Pathfinding on 3D Grid
+// ============================================================================
+//
+
+bool AOctNavVolume3D::FindPath(
+	const FVector& InStart,
 	const FVector& InDestination,
 	const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
 	UClass* InActorClassFilter,
 	TArray<FVector>& OutPath,
 	AActor* InActor /*= nullptr */,
-	float InDetectionRadius /*= 34.f*/, float InDetectionHalfHeight /*= 44.f */)
+	float InDetectionRadius /*= 34.f*/,
+	float InDetectionHalfHeight /*= 44.f */)
 {
 	OutPath.Reset();
 
-
+	// Convert world-space start/destination to grid nodes
 	NavNode* StartNode = GetNode(ConvertWorldLocationToGridCoordinates(InStart));
 	NavNode* GoalNode = GetNode(ConvertWorldLocationToGridCoordinates(InDestination));
 
@@ -586,69 +721,93 @@ bool AOctNavVolume3D::FindPath(const FVector& InStart,
 	{
 #if WITH_EDITOR
 		UE_LOG(LogTemp, Warning, TEXT("Start or End node not found"));
-#endif 
+#endif
 		return false;
 	}
 
 	bool HasGoalFinalized = false;
-	// automatically find nearest free node if start or goal is blocked
+
+	// -------------------------------------------------------
+	// Snap goal to nearest free node if original goal is blocked
+	// (by static geometry via octree and/or dynamic overlap)
+	// -------------------------------------------------------
 	if (OctreeRoot && QueryPointBlocked(ConvertGridCoordinatesToWorldLocation(GoalNode->Coordinates)))
 	{
-		if (NavNode* NewGoal = FindNearestFreeNode(GoalNode, InActor, InObjectTypes,
-			InActorClassFilter, InDetectionRadius, InDetectionHalfHeight))
+		if (NavNode* NewGoal = FindNearestFreeNode(
+			GoalNode,
+			InActor,
+			InObjectTypes,
+			InActorClassFilter,
+			InDetectionRadius,
+			InDetectionHalfHeight))
 		{
 			GoalNode = NewGoal;
 			HasGoalFinalized = true;
 		}
 		else
 		{
-			if(GEngine)
+			if (GEngine)
 			{
-				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+				GEngine->AddOnScreenDebugMessage(
+					-1, 5.f, FColor::Red,
 					TEXT("No free goal node found near destination"));
 			}
 			return false;
 		}
 	}
 
-	if (!HasGoalFinalized && IsActorOverlapping(InDetectionRadius, InDetectionHalfHeight, InActor,
-		ConvertGridCoordinatesToWorldLocation(GoalNode->Coordinates), InObjectTypes, InActorClassFilter))
+	// If goal node is occupied by dynamic actors, also try to relocate it
+	if (!HasGoalFinalized && IsActorOverlapping(
+		InDetectionRadius,
+		InDetectionHalfHeight,
+		InActor,
+		ConvertGridCoordinatesToWorldLocation(GoalNode->Coordinates),
+		InObjectTypes,
+		InActorClassFilter))
 	{
-		if (NavNode* NewGoal = FindNearestFreeNode(GoalNode, InActor, InObjectTypes,
-			InActorClassFilter, InDetectionRadius, InDetectionHalfHeight))
+		if (NavNode* NewGoal = FindNearestFreeNode(
+			GoalNode,
+			InActor,
+			InObjectTypes,
+			InActorClassFilter,
+			InDetectionRadius,
+			InDetectionHalfHeight))
 		{
 			GoalNode = NewGoal;
 		}
 		else
 		{
-			if(GEngine)
+			if (GEngine)
 			{
-				GEngine->AddOnScreenDebugMessage(-1, 5.f, FColor::Red,
+				GEngine->AddOnScreenDebugMessage(
+					-1, 5.f, FColor::Red,
 					TEXT("No free goal node found near destination"));
 			}
 			return false;
 		}
 	}
 
-
-	//A* Setup
-
+	// -------------------------------------------------------
+	// A* Setup
+	// -------------------------------------------------------
 	std::priority_queue<NavNode*, std::vector<NavNode*>, NavNodeCompare> OpenSet;
 	std::unordered_map<NavNode*, NavNode*> CameFrom;
 	std::unordered_map<NavNode*, float> GScores;
 	std::unordered_set<NavNode*> Visited;
 
+	// Heuristic: Euclidean distance in grid space
 	auto GetHeuristic = [&GoalNode](NavNode* InNode)
 		{
 			return FVector::Distance(FVector(InNode->Coordinates), FVector(GoalNode->Coordinates));
 		};
 
+	// Actual edge cost: Euclidean distance between neighbour cells
 	auto GetDistance = [](NavNode* FromNode, NavNode* ToNode)
 		{
 			return FVector::Distance(FVector(FromNode->Coordinates), FVector(ToNode->Coordinates));
 		};
 
-
+	// Safe accessor for g-scores (defaults to "infinite" if not set)
 	auto GetGScore = [&GScores](NavNode* InNode)
 		{
 			auto It = GScores.find(InNode);
@@ -659,33 +818,45 @@ bool AOctNavVolume3D::FindPath(const FVector& InStart,
 			return FLT_MAX;
 		};
 
+	// Initialize start node
 	StartNode->FScore = GetHeuristic(StartNode);
 	OpenSet.push(StartNode);
 	GScores[StartNode] = 0.0f;
 
-
+	// -------------------------------------------------------
+	// A* Main Loop
+	// -------------------------------------------------------
 	while (!OpenSet.empty())
 	{
-		NavNode* CurrentNavNode = OpenSet.top(); OpenSet.pop();
+		NavNode* CurrentNavNode = OpenSet.top();
+		OpenSet.pop();
 		Visited.insert(CurrentNavNode);
 
+		// Goal reached: reconstruct path
 		if (CurrentNavNode == GoalNode)
 		{
 			OutPath.Add(ConvertGridCoordinatesToWorldLocation(CurrentNavNode->Coordinates));
+
 			while (CameFrom.contains(CurrentNavNode))
 			{
-				OutPath.Insert(ConvertGridCoordinatesToWorldLocation(CurrentNavNode->Coordinates), 0);
+				OutPath.Insert(
+					ConvertGridCoordinatesToWorldLocation(CurrentNavNode->Coordinates),
+					0);
 				CurrentNavNode = CameFrom[CurrentNavNode];
 			}
+
 			OutPath.Insert(ConvertGridCoordinatesToWorldLocation(StartNode->Coordinates), 0);
 			return true;
 		}
 
 		const float CurrentGScore = GetGScore(CurrentNavNode);
 
+		// Evaluate neighbours
 		for (NavNode* Neighbour : CurrentNavNode->Neighbours)
 		{
 			const FVector NeighbourWorldPos = ConvertGridCoordinatesToWorldLocation(Neighbour->Coordinates);
+
+			// Skip neighbours blocked by octree
 			if (OctreeRoot && QueryPointBlocked(NeighbourWorldPos))
 			{
 				continue;
@@ -693,11 +864,18 @@ bool AOctNavVolume3D::FindPath(const FVector& InStart,
 
 			const float TentativeG = CurrentGScore + GetDistance(CurrentNavNode, Neighbour);
 			const float ExistingScore = GetGScore(Neighbour);
+
+			// Found a cheaper path to this neighbour
 			if (TentativeG < ExistingScore)
 			{
-
-				if (IsActorOverlapping(InDetectionRadius, InDetectionHalfHeight,
-					InActor, NeighbourWorldPos, InObjectTypes, InActorClassFilter))
+				// Check dynamic overlaps (e.g., other actors or obstacles)
+				if (IsActorOverlapping(
+					InDetectionRadius,
+					InDetectionHalfHeight,
+					InActor,
+					NeighbourWorldPos,
+					InObjectTypes,
+					InActorClassFilter))
 				{
 					continue;
 				}
@@ -706,6 +884,7 @@ bool AOctNavVolume3D::FindPath(const FVector& InStart,
 				GScores[Neighbour] = TentativeG;
 
 				Neighbour->FScore = TentativeG + GetHeuristic(Neighbour);
+
 				if (!Visited.contains(Neighbour))
 				{
 					OpenSet.push(Neighbour);
@@ -713,10 +892,7 @@ bool AOctNavVolume3D::FindPath(const FVector& InStart,
 			}
 		}
 	}
+
+	// No path found
 	return false;
-
 }
-
-
-
-
