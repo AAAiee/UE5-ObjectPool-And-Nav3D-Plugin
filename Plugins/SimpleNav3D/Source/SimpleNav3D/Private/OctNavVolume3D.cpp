@@ -109,7 +109,7 @@ void AOctNavVolume3D::BeginPlay()
 				return;
 			}
 
-			// Count how many axes are shared with the candidate node
+			// Count how many axes are bushared with the candidate node
 			int8 SharedAxes = 0;
 			if (Node->Coordinates.X == NCoord.X) SharedAxes++;
 			if (Node->Coordinates.Y == NCoord.Y) SharedAxes++;
@@ -492,12 +492,11 @@ bool AOctNavVolume3D::IsBoxBlocked(
 	const TArray<TEnumAsByte<EObjectTypeQuery>>& InObjectTypes,
 	UClass* InActorClassFilter)
 {
-	// Build list of collision channels to query against
-	FCollisionObjectQueryParams ObjectCollisionParams;
-	for (auto ObjectType : InObjectTypes)
-	{
-		ObjectCollisionParams.AddObjectTypesToQuery(UEngineTypes::ConvertToCollisionChannel(ObjectType));
-	}
+	// The octree is built before request-specific object types are available.
+	// Fall back to all static object channels so an empty list still produces useful occupancy data.
+	const FCollisionObjectQueryParams ObjectCollisionParams = InObjectTypes.IsEmpty()
+		? FCollisionObjectQueryParams(FCollisionObjectQueryParams::AllStaticObjects)
+		: FCollisionObjectQueryParams(InObjectTypes);
 
 	// Compute center and extent for box collision test
 	const FVector Center = InBox.GetCenter();

@@ -30,17 +30,24 @@ Video: [SimpleNav3D Demo](https://youtu.be/LV2WPoSnrL8)
 
 ```mermaid
 flowchart LR
-    Caller["C++ / Blueprint caller"] --> API["AOctNavVolume3D::FindPath"]
-    API --> Convert["World / Grid coordinate conversion"]
-    Convert --> Goal["Goal occupancy check"]
-    Goal -->|Goal is free| Search["A* Open Set"]
-    Goal -->|Goal is occupied| BFS["BFS finds nearest free node"]
-    BFS --> Search
-    Grid["3D NavNode grid<br/>6 / 18 / 26 connectivity"] --> Search
-    Octree["Octree<br/>Coarse occupancy query"] --> Search
-    Capsule["Capsule overlap<br/>Agent-size validation"] --> Search
-    Search --> Path["Reconstruct world-space waypoints"]
-    Path --> Agent["Demo agent<br/>Debug draw and waypoint movement"]
+    subgraph Init["Initialization"]
+        BeginPlay["BeginPlay"] --> NavData["Build navigation data<br/>3D grid connectivity<br/>Octree static-obstacle cache"]
+    end
+
+    subgraph Runtime["Runtime pathfinding"]
+        Caller["C++ / Blueprint caller"] --> API["AOctNavVolume3D::FindPath"]
+        API --> Convert["World / Grid coordinate conversion"]
+        Convert --> Goal{"Is the goal available?<br/>Octree + capsule"}
+        Goal -->|No| BFS["BFS finds the nearest free node"]
+        Goal -->|Yes| Search["Run A* search<br/>Octree + capsule filtering"]
+        BFS --> Search
+        Search --> Found["Reach the goal node"]
+        Found --> Path["Reconstruct world-space waypoints"]
+        Path --> Agent["Agent follows waypoints<br/>Debug draw"]
+    end
+
+    NavData --> Goal
+    NavData --> Search
 ```
 
 <details>

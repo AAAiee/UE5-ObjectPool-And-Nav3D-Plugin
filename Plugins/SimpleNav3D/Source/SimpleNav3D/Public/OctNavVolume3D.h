@@ -279,7 +279,7 @@ private:
 	 *
 	 * @param InBox             World-space bounds of this node.
 	 * @param InDepth           Current recursion depth.
-	 * @param InObjectTypes     Object types for blockage tests.
+	 * @param InObjectTypes     Object types for blockage tests. An empty list defaults to all static object channels.
 	 * @param InActorClassFilter Optional actor class filter (unused at the moment).
 	 *
 	 * @return Newly allocated FOctreeNode representing this region.
@@ -294,7 +294,7 @@ private:
 	 * Tests whether a given box is considered blocked by performing an overlap query.
 	 *
 	 * @param InBox             World-space box to test.
-	 * @param InObjectTypes     Object types to test against.
+	 * @param InObjectTypes     Object types to test against. An empty list defaults to all static object channels.
 	 * @param InActorClassFilter Optional actor class filter (unused).
 	 *
 	 * @return true if the box overlaps any blocking object, false otherwise.

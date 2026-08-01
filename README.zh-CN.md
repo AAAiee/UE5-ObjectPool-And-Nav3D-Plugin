@@ -30,17 +30,24 @@ SimpleNav3D 是一个用 **Unreal Engine 5.6 和 C++** 编写的 Runtime Plugin�
 
 ```mermaid
 flowchart LR
-    Caller["C++ / Blueprint 调用方"] --> API["AOctNavVolume3D::FindPath"]
-    API --> Convert["World / Grid 坐标转换"]
-    Convert --> Goal["目标节点占用检查"]
-    Goal -->|目标可用| Search["A* Open Set"]
-    Goal -->|目标被占用| BFS["BFS 查找最近可用节点"]
-    BFS --> Search
-    Grid["3D NavNode Grid<br/>6 / 18 / 26 邻接"] --> Search
-    Octree["Octree<br/>粗粒度占用查询"] --> Search
-    Capsule["Capsule Overlap<br/>按 Agent 尺寸验证"] --> Search
-    Search --> Path["重建 World-Space Waypoints"]
-    Path --> Agent["Demo Agent<br/>Debug Draw 与逐点移动"]
+    subgraph Init["初始化"]
+        BeginPlay["BeginPlay"] --> NavData["生成导航数据<br/>3D Grid 邻接关系<br/>Octree 静态障碍缓存"]
+    end
+
+    subgraph Runtime["运行时寻路"]
+        Caller["C++ / Blueprint 调用方"] --> API["AOctNavVolume3D::FindPath"]
+        API --> Convert["World / Grid 坐标转换"]
+        Convert --> Goal{"目标点可用？<br/>Octree + Capsule"}
+        Goal -->|否| BFS["BFS 查找最近可用节点"]
+        Goal -->|是| Search["运行 A* 搜索<br/>Octree + Capsule 过滤"]
+        BFS --> Search
+        Search --> Found["找到目标节点"]
+        Found --> Path["重建 World-Space Waypoints"]
+        Path --> Agent["Agent 逐点移动<br/>Debug Draw"]
+    end
+
+    NavData --> Goal
+    NavData --> Search
 ```
 
 <details>
