@@ -67,15 +67,15 @@ flowchart LR
 | Feature | Main implementation |
 |---|---|
 | **Runtime plugin and dependencies** | [SimpleNav3D.uplugin](Plugins/SimpleNav3D/SimpleNav3D.uplugin), [SimpleNav3D.Build.cs](Plugins/SimpleNav3D/Source/SimpleNav3D/SimpleNav3D.Build.cs) |
-| **3D grid and neighbour graph** | [NavNode.h](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h), [OctNavVolume3D.h](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h), [Grid initialization](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **World / grid coordinate conversion** | [OctNavVolume3D.h](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h), [OctNavVolume3D.cpp](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **A* and path reconstruction** | [NavNode Priority Queue](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h), [FindPath](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **BFS goal fallback** | [FindNearestFreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Octree construction and queries** | [FOctreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h), [BuildOctree / QueryPointBlocked](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Agent capsule collision checks** | [IsActorOverlapping](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Procedural debug grid** | [Grid settings](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h), [Mesh generation](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Blueprint API** | [BlueprintCallable interface](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h) |
-| **Demo agent and path drawing** | [NavDemoAgent.h](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.h), [NavDemoAgent.cpp](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.cpp), [Destination Marker](Source/TP_ThirdPerson/NavDemo/NavDemoDestinationMarker.cpp) |
+| **3D grid and neighbour graph** | [NavNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h#L15), [Grid settings](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L333), [Grid initialization](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L70) |
+| **World / grid coordinate conversion** | [World to grid](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L274), [Grid to world](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L289) |
+| **A* and path reconstruction** | [NavNodeCompare](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h#L35), [FindPath / A*](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L720), [Path reconstruction](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L852) |
+| **BFS goal fallback** | [FindNearestFreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L357) |
+| **Octree construction and queries** | [FOctreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L14), [BuildOctree](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L425), [QueryPointBlocked](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L519) |
+| **Agent capsule collision checks** | [IsActorOverlapping](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L311) |
+| **Procedural debug grid** | [Grid settings](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L333), [OnConstruction / mesh generation](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L552) |
+| **Blueprint API** | [Coordinate conversion](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L133), [FindPath](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L163) |
+| **Demo agent and path drawing** | [ANavDemoAgent](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.h#L12), [RequestPath](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.cpp#L79), [DrawCurrentPath](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.cpp#L118), [Destination Marker](Source/TP_ThirdPerson/NavDemo/NavDemoDestinationMarker.cpp#L7) |
 | **Default demo map** | [Nav3D_Demo.umap](Content/Nav3D_Demo.umap), [DefaultEngine.ini](Config/DefaultEngine.ini) |
 
 ## Public API

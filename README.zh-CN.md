@@ -67,15 +67,15 @@ flowchart LR
 | Feature | 主要实现入口 |
 |---|---|
 | **Runtime Plugin 与依赖配置** | [SimpleNav3D.uplugin](Plugins/SimpleNav3D/SimpleNav3D.uplugin)、[SimpleNav3D.Build.cs](Plugins/SimpleNav3D/Source/SimpleNav3D/SimpleNav3D.Build.cs) |
-| **3D Grid 与邻接图** | [NavNode.h](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h)、[OctNavVolume3D.h](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h)、[Grid 初始化](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **World / Grid 坐标转换** | [OctNavVolume3D.h](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h)、[OctNavVolume3D.cpp](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **A* 与路径重建** | [NavNode Priority Queue](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h)、[FindPath](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **BFS 目标点回退** | [FindNearestFreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Octree 构建与查询** | [FOctreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h)、[BuildOctree / QueryPointBlocked](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Agent Capsule 阻挡检测** | [IsActorOverlapping](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Procedural Debug Grid** | [Grid 配置](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h)、[Mesh 生成](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp) |
-| **Blueprint API** | [BlueprintCallable 接口](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h) |
-| **Demo Agent 与路径显示** | [NavDemoAgent.h](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.h)、[NavDemoAgent.cpp](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.cpp)、[Destination Marker](Source/TP_ThirdPerson/NavDemo/NavDemoDestinationMarker.cpp) |
+| **3D Grid 与邻接图** | [NavNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h#L15)、[Grid 配置](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L333)、[Grid 初始化](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L70) |
+| **World / Grid 坐标转换** | [World 转 Grid](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L274)、[Grid 转 World](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L289) |
+| **A* 与路径重建** | [NavNodeCompare](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/NavNode.h#L35)、[FindPath / A*](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L720)、[路径重建](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L852) |
+| **BFS 目标点回退** | [FindNearestFreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L357) |
+| **Octree 构建与查询** | [FOctreeNode](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L14)、[BuildOctree](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L425)、[QueryPointBlocked](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L519) |
+| **Agent Capsule 阻挡检测** | [IsActorOverlapping](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L311) |
+| **Procedural Debug Grid** | [Grid 配置](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L333)、[OnConstruction / Mesh 生成](Plugins/SimpleNav3D/Source/SimpleNav3D/Private/OctNavVolume3D.cpp#L552) |
+| **Blueprint API** | [坐标转换](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L133)、[FindPath](Plugins/SimpleNav3D/Source/SimpleNav3D/Public/OctNavVolume3D.h#L163) |
+| **Demo Agent 与路径显示** | [ANavDemoAgent](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.h#L12)、[RequestPath](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.cpp#L79)、[DrawCurrentPath](Source/TP_ThirdPerson/NavDemo/NavDemoAgent.cpp#L118)、[Destination Marker](Source/TP_ThirdPerson/NavDemo/NavDemoDestinationMarker.cpp#L7) |
 | **默认 Demo Map** | [Nav3D_Demo.umap](Content/Nav3D_Demo.umap)、[DefaultEngine.ini](Config/DefaultEngine.ini) |
 
 ## Public API
