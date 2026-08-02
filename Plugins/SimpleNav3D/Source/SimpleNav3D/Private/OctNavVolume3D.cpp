@@ -806,7 +806,21 @@ bool AOctNavVolume3D::FindPath(
 	// -------------------------------------------------------
 	// A* Setup
 	// -------------------------------------------------------
-	std::priority_queue<NavNode*, std::vector<NavNode*>, NavNodeCompare> OpenSet;
+	struct FOpenSetEntry
+	{
+		NavNode* Node = nullptr;
+		double FScore = 0.0;
+	};
+
+	struct FOpenSetEntryCompare
+	{
+		bool operator()(const FOpenSetEntry& A, const FOpenSetEntry& B) const
+		{
+			return A.FScore > B.FScore;
+		}
+	};
+
+	std::priority_queue<FOpenSetEntry, std::vector<FOpenSetEntry>, FOpenSetEntryCompare> OpenSet;
 	std::unordered_map<NavNode*, NavNode*> CameFrom;
 	std::unordered_map<NavNode*, float> GScores;
 	std::unordered_set<NavNode*> Visited;
@@ -835,24 +849,27 @@ bool AOctNavVolume3D::FindPath(
 		};
 
 	// Initialize start node
-	StartNode->FScore = GetHeuristic(StartNode);
-	OpenSet.push(StartNode);
 	GScores[StartNode] = 0.0f;
+	OpenSet.push({ StartNode, GetHeuristic(StartNode) });
 
 	// -------------------------------------------------------
 	// A* Main Loop
 	// -------------------------------------------------------
 	while (!OpenSet.empty())
 	{
-		NavNode* CurrentNavNode = OpenSet.top();
+		NavNode* CurrentNavNode = OpenSet.top().Node;
 		OpenSet.pop();
+
+		if (Visited.contains(CurrentNavNode))
+		{
+			continue;
+		}
+
 		Visited.insert(CurrentNavNode);
 
 		// Goal reached: reconstruct path
 		if (CurrentNavNode == GoalNode)
 		{
-			OutPath.Add(ConvertGridCoordinatesToWorldLocation(CurrentNavNode->Coordinates));
-
 			while (CameFrom.contains(CurrentNavNode))
 			{
 				OutPath.Insert(
@@ -870,6 +887,11 @@ bool AOctNavVolume3D::FindPath(
 		// Evaluate neighbours
 		for (NavNode* Neighbour : CurrentNavNode->Neighbours)
 		{
+			if (Visited.contains(Neighbour))
+			{
+				continue;
+			}
+
 			const FVector NeighbourWorldPos = ConvertGridCoordinatesToWorldLocation(Neighbour->Coordinates);
 
 			// Skip neighbours blocked by octree
@@ -898,13 +920,7 @@ bool AOctNavVolume3D::FindPath(
 
 				CameFrom[Neighbour] = CurrentNavNode;
 				GScores[Neighbour] = TentativeG;
-
-				Neighbour->FScore = TentativeG + GetHeuristic(Neighbour);
-
-				if (!Visited.contains(Neighbour))
-				{
-					OpenSet.push(Neighbour);
-				}
+				OpenSet.push({ Neighbour, TentativeG + GetHeuristic(Neighbour) });
 			}
 		}
 	}
