@@ -139,3 +139,6 @@ If the default level does not open automatically, load `Content/Nav3D_Demo.umap`
 - Dynamic obstacles are checked with capsule overlap during each path request. The caller decides when to request a new path.
 - The current output is a list of grid cell center waypoints without additional path smoothing.
 - This is a gameplay and AI programming sample, not a replacement for Unreal NavMesh.
+
+## Inspired By
+- https://github.com/UEDimensionchan/NavAndPool
